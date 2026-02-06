@@ -135,8 +135,18 @@ class FMPClient:
     # ----- Symbol universe -----
 
     async def get_stock_list(self) -> list[dict]:
-        """Get all available stock symbols."""
-        return await self._request("stock-list")
+        """Get all available stock symbols.
+
+        Uses legacy /api/v3/stock/list because the /stable/ endpoint
+        does not include exchange or type fields needed for filtering.
+        """
+        url = f"{self.base_url}/api/v3/stock/list"
+        params = {"apikey": self.api_key}
+        await self._limiter.acquire()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=30.0)
+            resp.raise_for_status()
+            return resp.json()
 
     # ----- Company info -----
 
@@ -248,7 +258,13 @@ class FMPClientSync:
                 time.sleep(wait)
 
     def get_stock_list(self) -> list[dict]:
-        return self._request("stock-list")
+        """Uses legacy /api/v3/stock/list for exchange + type fields."""
+        url = f"{self.base_url}/api/v3/stock/list"
+        params = {"apikey": self.api_key}
+        self._limiter.acquire()
+        resp = httpx.get(url, params=params, timeout=30.0)
+        resp.raise_for_status()
+        return resp.json()
 
     def get_profile(self, symbol: str) -> dict | None:
         data = self._request("profile", {"symbol": symbol})
