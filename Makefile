@@ -2,7 +2,7 @@ VENV := .venv/bin
 PYTHON := $(VENV)/python
 PIP := $(VENV)/pip
 
-.PHONY: setup backend frontend dev ingest-universe ingest-all ingest-symbol status
+.PHONY: setup backend frontend dev ingest-universe ingest-all ingest-symbol status refresh-screener
 
 # ---- Setup ----
 
@@ -38,3 +38,6 @@ ingest-symbol:
 
 status:
 	$(PYTHON) -m backend.app.cli status
+
+refresh-screener:
+	$(PYTHON) -m backend.app.cli refresh-screener

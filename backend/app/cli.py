@@ -115,6 +115,31 @@ def ingest_symbol(symbol: str, force: bool):
     click.echo(f"Done. {symbol.upper()} ingested.")
 
 
+@cli.command("refresh-screener")
+def refresh_screener():
+    """Refresh the screener_metrics materialized view.
+
+    Run this after ingesting new data so the screener reflects the latest
+    quarterly fundamentals.
+    """
+    import psycopg2
+
+    run_migrations_sync(settings.database_url)
+    conn = psycopg2.connect(settings.database_url)
+    try:
+        # Use CONCURRENTLY so readers are not blocked during refresh.
+        # Requires the unique index on screener_metrics(symbol).
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            click.echo("Refreshing screener_metrics materialized view...")
+            start = time.time()
+            cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY screener_metrics")
+            elapsed = time.time() - start
+            click.echo(f"Done in {elapsed:.1f}s.")
+    finally:
+        conn.close()
+
+
 @cli.command("status")
 def status():
     """Show ingestion progress summary."""

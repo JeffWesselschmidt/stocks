@@ -1,4 +1,4 @@
-import type { SymbolPageData, SearchResult } from '../types';
+import type { SymbolPageData, SearchResult, ScreenerResponse } from '../types';
 
 const BASE = '/api';
 
@@ -17,4 +17,11 @@ export async function getSymbolPage(symbol: string): Promise<SymbolPageData> {
 
 export async function searchSymbols(query: string): Promise<SearchResult[]> {
   return fetchJSON<SearchResult[]>(`${BASE}/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getScreenerResults(
+  params: Record<string, string>,
+): Promise<ScreenerResponse> {
+  const qs = new URLSearchParams(params).toString();
+  return fetchJSON<ScreenerResponse>(`${BASE}/screener?${qs}`);
 }
