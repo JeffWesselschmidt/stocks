@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { getScreenerResults } from '../api/client';
-import type { ScreenerRow, ScreenerResponse } from '../types';
+import { getScreenerResults, getSavedScreens, createSavedScreen, deleteSavedScreen } from '../api/client';
+import type { ScreenerRow, ScreenerResponse, SavedScreen } from '../types';
 
 // ---------------------------------------------------------------------------
 // Filter configuration
@@ -191,6 +191,12 @@ export default function ScreenerPage() {
   // Filter panel visibility
   const [filtersOpen, setFiltersOpen] = useState(true);
 
+  // Saved screens
+  const [savedScreens, setSavedScreens] = useState<SavedScreen[]>([]);
+  const [saveName, setSaveName] = useState('');
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   // ---- Core fetch, also pushes state into the URL ----
   const fetchData = useCallback(
     async (
@@ -230,7 +236,54 @@ export default function ScreenerPage() {
     fetchData(s.filters, s.sector, s.sortBy, s.sortDir, s.offset, true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load saved screens on mount
+  useEffect(() => {
+    getSavedScreens().then(setSavedScreens).catch(() => {});
+  }, []);
+
   // ---- Handlers ----
+
+  async function handleSaveScreen() {
+    const name = saveName.trim();
+    if (!name) return;
+    setSaving(true);
+    try {
+      // Capture all active filters + sector into a single object
+      const filters: Record<string, string> = { ...activeFilters };
+      if (activeSector) filters.sector = activeSector;
+      const created = await createSavedScreen(name, filters);
+      setSavedScreens((prev) => [created, ...prev]);
+      setSaveName('');
+      setSaveOpen(false);
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteScreen(id: number) {
+    try {
+      await deleteSavedScreen(id);
+      setSavedScreens((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleLoadScreen(screen: SavedScreen) {
+    const { sector: savedSector, ...rest } = screen.filters;
+    const filters = { ...rest };
+    const sec = savedSector ?? '';
+    setFilterInputs(filters);
+    setActiveFilters(filters);
+    setSectorFilter(sec);
+    setActiveSector(sec);
+    setOffset(0);
+    setSortBy('symbol');
+    setSortDir('asc');
+    fetchData(filters, sec, 'symbol', 'asc', 0);
+  }
 
   function handleApply() {
     const clean: Record<string, string> = {};
@@ -293,6 +346,62 @@ export default function ScreenerPage() {
         </button>
       </div>
 
+      {/* ---- Saved Screens ---- */}
+      {(savedScreens.length > 0 || saveOpen) && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-gray-500 font-medium shrink-0">Saved:</span>
+          {savedScreens.map((s) => (
+            <span
+              key={s.id}
+              className="inline-flex items-center gap-1 bg-white border border-gray-200 rounded-full pl-3 pr-1 py-1 group"
+            >
+              <button
+                onClick={() => handleLoadScreen(s)}
+                className="text-gray-700 hover:text-red-700 font-medium"
+                title="Load this screen"
+              >
+                {s.name}
+              </button>
+              <button
+                onClick={() => handleDeleteScreen(s.id)}
+                className="text-gray-300 hover:text-red-600 p-0.5 rounded-full transition-colors"
+                title="Delete"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </span>
+          ))}
+          {saveOpen && (
+            <span className="inline-flex items-center gap-1.5">
+              <input
+                type="text"
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveScreen()}
+                placeholder="Screen name…"
+                autoFocus
+                className="px-2.5 py-1 border border-gray-300 rounded-full text-sm w-40 focus:outline-none focus:ring-1 focus:ring-red-500"
+              />
+              <button
+                onClick={handleSaveScreen}
+                disabled={!saveName.trim() || saving}
+                className="px-2.5 py-1 text-xs font-medium bg-red-700 text-white rounded-full hover:bg-red-800 disabled:opacity-40"
+              >
+                {saving ? '…' : 'Save'}
+              </button>
+              <button
+                onClick={() => { setSaveOpen(false); setSaveName(''); }}
+                className="text-gray-400 hover:text-gray-600 text-xs"
+              >
+                Cancel
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* ---- Filter panel ---- */}
       {filtersOpen && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
@@ -347,7 +456,7 @@ export default function ScreenerPage() {
             </div>
           ))}
 
-          {/* Apply / Reset */}
+          {/* Apply / Reset / Save */}
           <div className="flex gap-3 pt-1">
             <button
               onClick={handleApply}
@@ -360,6 +469,12 @@ export default function ScreenerPage() {
               className="px-4 py-1.5 border border-gray-300 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 transition-colors"
             >
               Reset
+            </button>
+            <button
+              onClick={() => setSaveOpen(true)}
+              className="px-4 py-1.5 border border-gray-300 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 transition-colors ml-auto"
+            >
+              Save Screen
             </button>
           </div>
         </div>

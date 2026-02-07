@@ -1,11 +1,15 @@
 """
 API routes for the symbol page and screener.
 
-GET /api/symbol/{symbol}  -- full symbol page data
-GET /api/search?q=...     -- symbol search
-GET /api/screener         -- screener with filters, sorting, pagination
+GET  /api/symbol/{symbol}  -- full symbol page data
+GET  /api/search?q=...     -- symbol search
+GET  /api/screener         -- screener with filters, sorting, pagination
+GET  /api/screens          -- list saved screens
+POST /api/screens          -- create a saved screen
+DELETE /api/screens/{id}   -- delete a saved screen
 """
 
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -30,6 +34,8 @@ from backend.app.models.schemas import (
     SearchResult,
     ScreenerRow,
     ScreenerResponse,
+    SavedScreen,
+    SavedScreenCreate,
 )
 
 logger = logging.getLogger(__name__)
@@ -315,3 +321,60 @@ async def get_screener(
         results=[ScreenerRow(**dict(r)) for r in rows],
         total=total,
     )
+
+
+# ---------------------------------------------------------------------------
+# Saved Screens  (GET / POST / DELETE)
+# ---------------------------------------------------------------------------
+
+@router.get("/screens", response_model=list[SavedScreen])
+async def list_screens():
+    """List all saved screens, newest first."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, filters, created_at FROM saved_screens ORDER BY created_at DESC"
+        )
+    return [
+        SavedScreen(
+            id=r["id"],
+            name=r["name"],
+            filters=json.loads(r["filters"]) if isinstance(r["filters"], str) else dict(r["filters"]),
+            created_at=r["created_at"].isoformat(),
+        )
+        for r in rows
+    ]
+
+
+@router.post("/screens", response_model=SavedScreen, status_code=201)
+async def create_screen(body: SavedScreenCreate):
+    """Save the current screener filters with a name."""
+    if not body.name.strip():
+        raise HTTPException(400, "Name is required")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO saved_screens (name, filters) VALUES ($1, $2::jsonb) RETURNING id, name, filters, created_at",
+            body.name.strip(),
+            json.dumps(body.filters),
+        )
+
+    return SavedScreen(
+        id=row["id"],
+        name=row["name"],
+        filters=json.loads(row["filters"]) if isinstance(row["filters"], str) else dict(row["filters"]),
+        created_at=row["created_at"].isoformat(),
+    )
+
+
+@router.delete("/screens/{screen_id}", status_code=204)
+async def delete_screen(screen_id: int):
+    """Delete a saved screen by ID."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM saved_screens WHERE id = $1", screen_id
+        )
+    if result == "DELETE 0":
+        raise HTTPException(404, "Screen not found")
