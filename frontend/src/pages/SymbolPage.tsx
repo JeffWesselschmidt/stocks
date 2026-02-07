@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { getSymbolPage } from '../api/client';
 import type { SymbolPageData } from '../types';
 import HeaderStrip from '../components/HeaderStrip';
@@ -6,16 +7,17 @@ import KeyStatistics from '../components/KeyStatistics';
 import MetricsChart from '../components/MetricsChart';
 import AnnualTable from '../components/AnnualTable';
 
-interface Props {
-  symbol: string;
-}
+export default function SymbolPage() {
+  const { symbol: rawSymbol } = useParams<{ symbol: string }>();
+  const symbol = rawSymbol?.toUpperCase() || '';
 
-export default function SymbolPage({ symbol }: Props) {
   const [data, setData] = useState<SymbolPageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!symbol) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -35,6 +37,8 @@ export default function SymbolPage({ symbol }: Props) {
       cancelled = true;
     };
   }, [symbol]);
+
+  if (!symbol) return null;
 
   if (loading) {
     return (
@@ -90,8 +94,8 @@ export default function SymbolPage({ symbol }: Props) {
         </div>
       </div>
 
-      {/* Annual Table */}
-      <AnnualTable data={data.annual_table} />
+      {/* Financial Table (Annual / Quarterly toggle) */}
+      <AnnualTable data={data.annual_table} quarterlyData={data.quarterly_table} />
     </div>
   );
 }

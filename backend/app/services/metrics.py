@@ -431,6 +431,76 @@ def _compute_yoy_growth(annuals: list[dict], field: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Quarterly table data
+# ---------------------------------------------------------------------------
+
+def build_quarterly_table(income_rows: list[dict]) -> list[dict]:
+    """
+    Build quarterly table rows from raw quarterly income data.
+
+    Each row has the same shape as an annual row plus label / fiscal_quarter.
+    Growth rates are YoY (same quarter, prior year).
+    ROA/ROE/ROIC are omitted (None) because single-quarter values are misleading.
+    """
+    sorted_rows = sorted(income_rows, key=lambda r: (
+        r.get("fiscal_year", 0), r.get("fiscal_quarter", 0),
+    ))
+
+    # Lookup for YoY: (fiscal_year, fiscal_quarter) -> row
+    lookup: dict[tuple[int, int], dict] = {}
+    for row in sorted_rows:
+        fy = row.get("fiscal_year")
+        fq = row.get("fiscal_quarter")
+        if fy and fq:
+            lookup[(int(fy), int(fq))] = row
+
+    results: list[dict] = []
+    for row in sorted_rows:
+        fy = row.get("fiscal_year")
+        fq = row.get("fiscal_quarter")
+        if not fy or not fq:
+            continue
+        fy, fq = int(fy), int(fq)
+
+        rev = _safe_float(row.get("revenue"))
+        gp = _safe_float(row.get("gross_profit"))
+        oi = _safe_float(row.get("operating_income"))
+        eps = _safe_float(row.get("eps_diluted"))
+
+        # YoY growth (same quarter previous year)
+        prev = lookup.get((fy - 1, fq))
+        rev_growth = None
+        eps_growth = None
+        if prev:
+            prev_rev = _safe_float(prev.get("revenue"))
+            if prev_rev and rev is not None and prev_rev != 0:
+                rev_growth = _pct((rev - prev_rev) / abs(prev_rev))
+            prev_eps = _safe_float(prev.get("eps_diluted"))
+            if prev_eps and eps is not None and prev_eps != 0:
+                eps_growth = _pct((eps - prev_eps) / abs(prev_eps))
+
+        short_year = str(fy)[-2:]
+        results.append({
+            "label": f"Q{fq}'{short_year}",
+            "fiscal_year": fy,
+            "fiscal_quarter": fq,
+            "revenue": rev,
+            "revenue_growth": rev_growth,
+            "gross_profit": gp,
+            "gross_margin": _pct(_safe_div(gp, rev)),
+            "operating_profit": oi,
+            "operating_margin": _pct(_safe_div(oi, rev)),
+            "eps": eps,
+            "eps_growth": eps_growth,
+            "roa": None,
+            "roe": None,
+            "roic": None,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Annual table data
 # ---------------------------------------------------------------------------
 
@@ -611,6 +681,7 @@ def compute_all_metrics(
         "cagr_10yr": compute_10yr_cagr(annuals),
         "capital_structure": compute_capital_structure(annuals),
         "annual_table": annual_table,
+        "quarterly_table": build_quarterly_table(income_rows),
         "roic_chart": build_roic_chart(annuals),
         "ttm": ttm,
     }

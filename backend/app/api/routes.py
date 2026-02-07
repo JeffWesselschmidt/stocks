@@ -1,13 +1,14 @@
 """
-API routes for the symbol page.
+API routes for the symbol page and screener.
 
 GET /api/symbol/{symbol}  -- full symbol page data
 GET /api/search?q=...     -- symbol search
+GET /api/screener         -- screener with filters, sorting, pagination
 """
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.app.db.connection import get_pool
 from backend.app.services.fmp_client import FMPClient
@@ -24,8 +25,11 @@ from backend.app.models.schemas import (
     CAGR10yr,
     CapitalStructure,
     AnnualRow,
+    QuarterlyRow,
     ROICPoint,
     SearchResult,
+    ScreenerRow,
+    ScreenerResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,6 +156,7 @@ async def get_symbol_page(symbol: str):
             capital_structure=CapitalStructure(**metrics["capital_structure"]),
         ),
         annual_table=[AnnualRow(**row) for row in metrics["annual_table"]],
+        quarterly_table=[QuarterlyRow(**row) for row in metrics["quarterly_table"]],
         roic_chart=[ROICPoint(**pt) for pt in metrics["roic_chart"]],
     )
 
@@ -205,3 +210,108 @@ async def search_symbols(q: str = Query(..., min_length=1)):
         logger.error("FMP search failed: %s", e)
 
     return []
+
+
+# ---------------------------------------------------------------------------
+# GET /api/screener
+# ---------------------------------------------------------------------------
+
+# Numeric columns that support min_* / max_* query-param filters.
+_SCREENER_FILTER_COLS: set[str] = {
+    "median_roa", "median_roe", "median_roic",
+    "profit_pct",
+    "median_gross_margin", "median_operating_margin", "median_net_margin", "median_fcf_margin",
+    "median_revenue_growth", "median_ni_growth", "median_eps_growth",
+    "median_ocf_growth", "median_fcf_growth",
+    "revenue_cagr", "eps_cagr", "ocf_cagr", "fcf_cagr",
+    "latest_long_term_debt", "median_debt_to_equity", "latest_current_ratio",
+    "years_of_data",
+}
+
+# All columns valid for ORDER BY.
+_SCREENER_SORT_COLS: set[str] = _SCREENER_FILTER_COLS | {
+    "symbol", "name", "sector", "industry",
+}
+
+
+@router.get("/screener", response_model=ScreenerResponse)
+async def get_screener(
+    request: Request,
+    sector: str | None = Query(None, description="Filter by sector (case-insensitive)"),
+    industry: str | None = Query(None, description="Filter by industry (case-insensitive)"),
+    sort_by: str = Query("symbol", description="Column to sort by"),
+    sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
+    limit: int = Query(50, ge=1, le=200, description="Results per page"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+):
+    """Screen stocks by fundamental metrics.
+
+    Dynamic numeric filters are passed as query params:
+      min_<column>=N  and/or  max_<column>=N
+    For example: ?min_median_roic=15&max_median_debt_to_equity=0.5
+    """
+    pool = await get_pool()
+
+    # ---- build WHERE clause from query params ----
+    conditions: list[str] = []
+    params: list[object] = []
+    idx = 1  # asyncpg uses $1, $2, … placeholders
+
+    for col in _SCREENER_FILTER_COLS:
+        min_val = request.query_params.get(f"min_{col}")
+        if min_val is not None:
+            try:
+                conditions.append(f"{col} >= ${idx}")
+                params.append(float(min_val))
+                idx += 1
+            except ValueError:
+                pass
+        max_val = request.query_params.get(f"max_{col}")
+        if max_val is not None:
+            try:
+                conditions.append(f"{col} <= ${idx}")
+                params.append(float(max_val))
+                idx += 1
+            except ValueError:
+                pass
+
+    if sector:
+        conditions.append(f"sector ILIKE ${idx}")
+        params.append(sector)
+        idx += 1
+
+    if industry:
+        conditions.append(f"industry ILIKE ${idx}")
+        params.append(industry)
+        idx += 1
+
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    # ---- validate sort ----
+    if sort_by not in _SCREENER_SORT_COLS:
+        sort_by = "symbol"
+    if sort_dir.lower() not in ("asc", "desc"):
+        sort_dir = "asc"
+    order = f"ORDER BY {sort_by} {sort_dir} NULLS LAST"
+
+    # ---- execute queries ----
+    async with pool.acquire() as conn:
+        # Check if the materialized view exists and has data
+        try:
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM screener_metrics {where}", *params
+            )
+        except Exception:
+            # View may not exist or be empty yet
+            return ScreenerResponse(results=[], total=0)
+
+        rows = await conn.fetch(
+            f"SELECT * FROM screener_metrics {where} {order} "
+            f"LIMIT ${idx} OFFSET ${idx + 1}",
+            *params, limit, offset,
+        )
+
+    return ScreenerResponse(
+        results=[ScreenerRow(**dict(r)) for r in rows],
+        total=total,
+    )
