@@ -578,12 +578,39 @@ def build_roic_chart(annuals: list[dict]) -> list[dict]:
     return [{"year": r["fiscal_year"], "roic": r["roic"]} for r in returns]
 
 
-def build_ttm_row(ttm: dict, last_annual: dict | None = None) -> dict:
+def _compute_prior_ttm(income_rows: list[dict]) -> dict | None:
+    """
+    Compute a minimal prior-TTM from the 4 quarters immediately before
+    the current TTM window (positions 4-7 when sorted most-recent-first).
+
+    This gives a non-overlapping year-over-year comparison base.
+    Returns dict with 'revenue' and 'eps_diluted', or None if insufficient data.
+    """
+    sorted_desc = sorted(income_rows, key=lambda r: r.get("period_end_date", ""), reverse=True)
+    prior_quarters = sorted_desc[4:8]
+    if len(prior_quarters) < 4:
+        return None
+
+    rev_vals = [_safe_float(q.get("revenue")) for q in prior_quarters]
+    rev_clean = [v for v in rev_vals if v is not None]
+
+    eps_vals = [_safe_float(q.get("eps_diluted")) for q in prior_quarters]
+    eps_clean = [v for v in eps_vals if v is not None]
+
+    return {
+        "revenue": sum(rev_clean) if rev_clean else None,
+        "eps_diluted": round(sum(eps_clean), 4) if eps_clean else None,
+    }
+
+
+def build_ttm_row(ttm: dict, prior_ttm: dict | None = None) -> dict:
     """
     Build a TTM row in the same shape as an annual table row.
 
     The TTM row uses fiscal_year=0 as a sentinel (frontend displays "TTM" instead).
-    Growth rates compare TTM to the last complete fiscal year.
+    Growth rates compare TTM to the prior TTM (the 4 quarters immediately
+    preceding the current TTM window) for a true YoY comparison with no
+    overlapping quarters.
     """
     rev = _safe_float(ttm.get("revenue"))
     ni = _safe_float(ttm.get("net_income"))
@@ -595,7 +622,6 @@ def build_ttm_row(ttm: dict, last_annual: dict | None = None) -> dict:
     ltd = _safe_float(ttm.get("long_term_debt")) or 0
     std = _safe_float(ttm.get("short_term_debt")) or 0
     cash = _safe_float(ttm.get("cash_and_equivalents")) or 0
-    fcf = _safe_float(ttm.get("free_cash_flow"))
 
     roa = _safe_div(ni, ta)
     roe = _safe_div(ni, te)
@@ -611,14 +637,14 @@ def build_ttm_row(ttm: dict, last_annual: dict | None = None) -> dict:
     invested_capital = (te or 0) + total_debt - cash if te is not None else None
     roic = _safe_div(nopat, invested_capital)
 
-    # Growth vs last complete fiscal year
+    # Growth vs prior TTM (non-overlapping YoY)
     rev_growth = None
     eps_growth = None
-    if last_annual:
-        prev_rev = _safe_float(last_annual.get("revenue"))
+    if prior_ttm:
+        prev_rev = _safe_float(prior_ttm.get("revenue"))
         if prev_rev and rev and prev_rev != 0:
             rev_growth = _pct((rev - prev_rev) / abs(prev_rev))
-        prev_eps = _safe_float(last_annual.get("eps_diluted"))
+        prev_eps = _safe_float(prior_ttm.get("eps_diluted"))
         ttm_eps = _safe_float(ttm.get("eps_diluted"))
         if prev_eps and ttm_eps is not None and prev_eps != 0:
             eps_growth = _pct((ttm_eps - prev_eps) / abs(prev_eps))
@@ -670,8 +696,9 @@ def compute_all_metrics(
     annual_table = build_annual_table(annuals)
 
     # Append TTM as the rightmost column
-    last_annual = annuals[-1] if annuals else None
-    ttm_row = build_ttm_row(ttm, last_annual)
+    # Compare to prior TTM (quarters 5-8) for true YoY growth
+    prior_ttm = _compute_prior_ttm(income_rows)
+    ttm_row = build_ttm_row(ttm, prior_ttm)
     annual_table.append(ttm_row)
 
     return {
