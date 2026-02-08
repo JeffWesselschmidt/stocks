@@ -239,12 +239,31 @@ _SCREENER_SORT_COLS: set[str] = _SCREENER_FILTER_COLS | {
     "symbol", "name", "sector", "industry",
 }
 
+# Filter groups: map group key -> set of column names.
+# When a group key appears in the `or_groups` query param, conditions for
+# its columns are OR'd together instead of AND'd.
+_SCREENER_FILTER_GROUPS: dict[str, set[str]] = {
+    "returns": {"median_roa", "median_roe", "median_roic"},
+    "profitability": {"profit_pct"},
+    "margins": {"median_gross_margin", "median_operating_margin", "median_net_margin", "median_fcf_margin"},
+    "growth_yoy": {"median_revenue_growth", "median_ni_growth", "median_eps_growth", "median_ocf_growth", "median_fcf_growth"},
+    "growth_cagr": {"revenue_cagr", "eps_cagr", "ocf_cagr", "fcf_cagr"},
+    "debt": {"median_debt_to_equity", "latest_current_ratio"},
+}
+
+# Reverse lookup: column -> group key
+_COL_TO_GROUP: dict[str, str] = {}
+for _gk, _cols in _SCREENER_FILTER_GROUPS.items():
+    for _c in _cols:
+        _COL_TO_GROUP[_c] = _gk
+
 
 @router.get("/screener", response_model=ScreenerResponse)
 async def get_screener(
     request: Request,
     sector: str | None = Query(None, description="Filter by sector (case-insensitive)"),
     industry: str | None = Query(None, description="Filter by industry (case-insensitive)"),
+    or_groups: str | None = Query(None, description="Comma-separated group keys to OR within (e.g. returns,growth_yoy)"),
     sort_by: str = Query("symbol", description="Column to sort by"),
     sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
     limit: int = Query(50, ge=1, le=200, description="Results per page"),
@@ -255,43 +274,74 @@ async def get_screener(
     Dynamic numeric filters are passed as query params:
       min_<column>=N  and/or  max_<column>=N
     For example: ?min_median_roic=15&max_median_debt_to_equity=0.5
+
+    Use or_groups to OR conditions within a filter group:
+      ?or_groups=returns,growth_yoy&min_median_roic=15&min_median_roe=15
+    This means: (ROIC >= 15 OR ROE >= 15) instead of (ROIC >= 15 AND ROE >= 15).
+    Groups not listed in or_groups remain AND'd as usual.
     """
     pool = await get_pool()
 
+    # Parse which groups should use OR logic
+    or_group_set: set[str] = set()
+    if or_groups:
+        or_group_set = {g.strip() for g in or_groups.split(",") if g.strip() in _SCREENER_FILTER_GROUPS}
+
     # ---- build WHERE clause from query params ----
-    conditions: list[str] = []
+    # Conditions that are AND'd at the top level
+    and_conditions: list[str] = []
+    # Conditions bucketed by OR group key
+    or_buckets: dict[str, list[str]] = {}
     params: list[object] = []
     idx = 1  # asyncpg uses $1, $2, … placeholders
 
     for col in _SCREENER_FILTER_COLS:
+        group_key = _COL_TO_GROUP.get(col)
+        use_or = group_key is not None and group_key in or_group_set
+
         min_val = request.query_params.get(f"min_{col}")
         if min_val is not None:
             try:
-                conditions.append(f"{col} >= ${idx}")
+                cond = f"{col} >= ${idx}"
                 params.append(float(min_val))
                 idx += 1
+                if use_or:
+                    or_buckets.setdefault(group_key, []).append(cond)
+                else:
+                    and_conditions.append(cond)
             except ValueError:
                 pass
         max_val = request.query_params.get(f"max_{col}")
         if max_val is not None:
             try:
-                conditions.append(f"{col} <= ${idx}")
+                cond = f"{col} <= ${idx}"
                 params.append(float(max_val))
                 idx += 1
+                if use_or:
+                    or_buckets.setdefault(group_key, []).append(cond)
+                else:
+                    and_conditions.append(cond)
             except ValueError:
                 pass
 
+    # Collapse each OR bucket into a single parenthesized condition
+    for _gk, bucket in or_buckets.items():
+        if len(bucket) == 1:
+            and_conditions.append(bucket[0])
+        else:
+            and_conditions.append(f"({' OR '.join(bucket)})")
+
     if sector:
-        conditions.append(f"sector ILIKE ${idx}")
+        and_conditions.append(f"sector ILIKE ${idx}")
         params.append(sector)
         idx += 1
 
     if industry:
-        conditions.append(f"industry ILIKE ${idx}")
+        and_conditions.append(f"industry ILIKE ${idx}")
         params.append(industry)
         idx += 1
 
-    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    where = "WHERE " + " AND ".join(and_conditions) if and_conditions else ""
 
     # ---- validate sort ----
     if sort_by not in _SCREENER_SORT_COLS:
