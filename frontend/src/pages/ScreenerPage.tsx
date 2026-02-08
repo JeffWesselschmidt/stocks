@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { getScreenerResults } from '../api/client';
-import type { ScreenerRow, ScreenerResponse } from '../types';
+import { getScreenerResults, getSavedScreens, createSavedScreen, deleteSavedScreen } from '../api/client';
+import type { ScreenerRow, ScreenerResponse, SavedScreen } from '../types';
 
 // ---------------------------------------------------------------------------
 // Filter configuration
@@ -15,12 +15,15 @@ interface FilterDef {
 }
 
 interface FilterGroup {
+  /** Stable key matching the backend group key (used for or_groups param). */
+  groupKey: string;
   title: string;
   filters: FilterDef[];
 }
 
 const FILTER_GROUPS: FilterGroup[] = [
   {
+    groupKey: 'returns',
     title: 'Returns (10yr median %)',
     filters: [
       { key: 'median_roic', label: 'ROIC' },
@@ -29,12 +32,14 @@ const FILTER_GROUPS: FilterGroup[] = [
     ],
   },
   {
+    groupKey: 'profitability',
     title: 'Profitability',
     filters: [
       { key: 'profit_pct', label: 'Profit %', mode: 'min' },
     ],
   },
   {
+    groupKey: 'margins',
     title: 'Margins (10yr median %)',
     filters: [
       { key: 'median_gross_margin', label: 'Gross' },
@@ -44,6 +49,7 @@ const FILTER_GROUPS: FilterGroup[] = [
     ],
   },
   {
+    groupKey: 'growth_yoy',
     title: 'Growth — Median YoY %',
     filters: [
       { key: 'median_revenue_growth', label: 'Revenue' },
@@ -54,6 +60,7 @@ const FILTER_GROUPS: FilterGroup[] = [
     ],
   },
   {
+    groupKey: 'growth_cagr',
     title: 'Growth — CAGR %',
     filters: [
       { key: 'revenue_cagr', label: 'Revenue' },
@@ -63,6 +70,7 @@ const FILTER_GROUPS: FilterGroup[] = [
     ],
   },
   {
+    groupKey: 'debt',
     title: 'Debt & Liquidity',
     filters: [
       { key: 'median_debt_to_equity', label: 'D/E', mode: 'max' },
@@ -137,7 +145,8 @@ function readStateFromParams(sp: URLSearchParams) {
   const sortBy = sp.get('sort_by') ?? 'symbol';
   const sortDir = (sp.get('sort_dir') === 'desc' ? 'desc' : 'asc') as 'asc' | 'desc';
   const offset = Math.max(0, Number(sp.get('offset')) || 0);
-  return { filters, sector, sortBy, sortDir, offset };
+  const orGroups = new Set((sp.get('or_groups') ?? '').split(',').filter(Boolean));
+  return { filters, sector, sortBy, sortDir, offset, orGroups };
 }
 
 /** Build a URLSearchParams from the current screener state. */
@@ -147,6 +156,7 @@ function buildParams(
   sortBy: string,
   sortDir: string,
   offset: number,
+  orGroups: Set<string>,
 ): URLSearchParams {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
@@ -156,6 +166,7 @@ function buildParams(
   if (sortBy !== 'symbol') p.set('sort_by', sortBy);
   if (sortDir !== 'asc') p.set('sort_dir', sortDir);
   if (offset > 0) p.set('offset', String(offset));
+  if (orGroups.size > 0) p.set('or_groups', [...orGroups].join(','));
   return p;
 }
 
@@ -188,8 +199,17 @@ export default function ScreenerPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initial.current.sortDir);
   const [offset, setOffset] = useState(initial.current.offset);
 
+  // OR groups — which filter groups use OR instead of AND
+  const [orGroups, setOrGroups] = useState<Set<string>>(initial.current.orGroups);
+
   // Filter panel visibility
   const [filtersOpen, setFiltersOpen] = useState(true);
+
+  // Saved screens
+  const [savedScreens, setSavedScreens] = useState<SavedScreen[]>([]);
+  const [saveName, setSaveName] = useState('');
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // ---- Core fetch, also pushes state into the URL ----
   const fetchData = useCallback(
@@ -199,16 +219,18 @@ export default function ScreenerPage() {
       sort: string,
       dir: string,
       off: number,
+      orGrps: Set<string>,
       replace = false,
     ) => {
       // Sync URL
-      setSearchParams(buildParams(filters, sector, sort, dir, off), { replace });
+      setSearchParams(buildParams(filters, sector, sort, dir, off, orGrps), { replace });
 
       setLoading(true);
       setError(null);
       try {
         const params: Record<string, string> = { ...filters };
         if (sector) params.sector = sector;
+        if (orGrps.size > 0) params.or_groups = [...orGrps].join(',');
         params.sort_by = sort;
         params.sort_dir = dir;
         params.limit = String(PAGE_SIZE);
@@ -227,10 +249,60 @@ export default function ScreenerPage() {
   // Initial load — uses whatever was in the URL (or defaults)
   useEffect(() => {
     const s = initial.current;
-    fetchData(s.filters, s.sector, s.sortBy, s.sortDir, s.offset, true);
+    fetchData(s.filters, s.sector, s.sortBy, s.sortDir, s.offset, s.orGroups, true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load saved screens on mount
+  useEffect(() => {
+    getSavedScreens().then(setSavedScreens).catch(() => {});
+  }, []);
+
   // ---- Handlers ----
+
+  async function handleSaveScreen() {
+    const name = saveName.trim();
+    if (!name) return;
+    setSaving(true);
+    try {
+      // Capture all active filters + sector + or_groups into a single object
+      const filters: Record<string, string> = { ...activeFilters };
+      if (activeSector) filters.sector = activeSector;
+      if (orGroups.size > 0) filters.or_groups = [...orGroups].join(',');
+      const created = await createSavedScreen(name, filters);
+      setSavedScreens((prev) => [created, ...prev]);
+      setSaveName('');
+      setSaveOpen(false);
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteScreen(id: number) {
+    try {
+      await deleteSavedScreen(id);
+      setSavedScreens((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleLoadScreen(screen: SavedScreen) {
+    const { sector: savedSector, or_groups: savedOrGroups, ...rest } = screen.filters;
+    const filters = { ...rest };
+    const sec = savedSector ?? '';
+    const restoredOrGroups = new Set((savedOrGroups ?? '').split(',').filter(Boolean));
+    setFilterInputs(filters);
+    setActiveFilters(filters);
+    setSectorFilter(sec);
+    setActiveSector(sec);
+    setOrGroups(restoredOrGroups);
+    setOffset(0);
+    setSortBy('symbol');
+    setSortDir('asc');
+    fetchData(filters, sec, 'symbol', 'asc', 0, restoredOrGroups);
+  }
 
   function handleApply() {
     const clean: Record<string, string> = {};
@@ -240,7 +312,7 @@ export default function ScreenerPage() {
     setActiveFilters(clean);
     setActiveSector(sectorFilter);
     setOffset(0);
-    fetchData(clean, sectorFilter, sortBy, sortDir, 0);
+    fetchData(clean, sectorFilter, sortBy, sortDir, 0, orGroups);
   }
 
   function handleReset() {
@@ -248,10 +320,11 @@ export default function ScreenerPage() {
     setActiveFilters({});
     setSectorFilter('');
     setActiveSector('');
+    setOrGroups(new Set());
     setOffset(0);
     setSortBy('symbol');
     setSortDir('asc');
-    fetchData({}, '', 'symbol', 'asc', 0);
+    fetchData({}, '', 'symbol', 'asc', 0, new Set());
   }
 
   function handleSort(col: string) {
@@ -264,12 +337,24 @@ export default function ScreenerPage() {
     setSortBy(col);
     setSortDir(newDir);
     setOffset(0);
-    fetchData(activeFilters, activeSector, col, newDir, 0);
+    fetchData(activeFilters, activeSector, col, newDir, 0, orGroups);
   }
 
   function handlePage(newOffset: number) {
     setOffset(newOffset);
-    fetchData(activeFilters, activeSector, sortBy, sortDir, newOffset);
+    fetchData(activeFilters, activeSector, sortBy, sortDir, newOffset, orGroups);
+  }
+
+  function toggleOrGroup(groupKey: string) {
+    setOrGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
   }
 
   function setFilter(key: string, value: string) {
@@ -293,6 +378,62 @@ export default function ScreenerPage() {
         </button>
       </div>
 
+      {/* ---- Saved Screens ---- */}
+      {(savedScreens.length > 0 || saveOpen) && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-gray-500 font-medium shrink-0">Saved:</span>
+          {savedScreens.map((s) => (
+            <span
+              key={s.id}
+              className="inline-flex items-center gap-1 bg-white border border-gray-200 rounded-full pl-3 pr-1 py-1 group"
+            >
+              <button
+                onClick={() => handleLoadScreen(s)}
+                className="text-gray-700 hover:text-red-700 font-medium"
+                title="Load this screen"
+              >
+                {s.name}
+              </button>
+              <button
+                onClick={() => handleDeleteScreen(s.id)}
+                className="text-gray-300 hover:text-red-600 p-0.5 rounded-full transition-colors"
+                title="Delete"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </span>
+          ))}
+          {saveOpen && (
+            <span className="inline-flex items-center gap-1.5">
+              <input
+                type="text"
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveScreen()}
+                placeholder="Screen name…"
+                autoFocus
+                className="px-2.5 py-1 border border-gray-300 rounded-full text-sm w-40 focus:outline-none focus:ring-1 focus:ring-red-500"
+              />
+              <button
+                onClick={handleSaveScreen}
+                disabled={!saveName.trim() || saving}
+                className="px-2.5 py-1 text-xs font-medium bg-red-700 text-white rounded-full hover:bg-red-800 disabled:opacity-40"
+              >
+                {saving ? '…' : 'Save'}
+              </button>
+              <button
+                onClick={() => { setSaveOpen(false); setSaveName(''); }}
+                className="text-gray-400 hover:text-gray-600 text-xs"
+              >
+                Cancel
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* ---- Filter panel ---- */}
       {filtersOpen && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
@@ -310,10 +451,27 @@ export default function ScreenerPage() {
 
           {/* Metric filters grouped by category */}
           {FILTER_GROUPS.map((group) => (
-            <div key={group.title}>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
-                {group.title}
-              </p>
+            <div key={group.groupKey}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  {group.title}
+                </p>
+                {group.filters.length > 1 && (
+                  <button
+                    onClick={() => toggleOrGroup(group.groupKey)}
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${
+                      orGroups.has(group.groupKey)
+                        ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                        : 'bg-gray-100 text-gray-400 border border-gray-200 hover:text-gray-600'
+                    }`}
+                    title={orGroups.has(group.groupKey)
+                      ? 'Filters in this group are OR\'d — click to switch to AND'
+                      : 'Filters in this group are AND\'d — click to switch to OR'}
+                  >
+                    {orGroups.has(group.groupKey) ? 'OR' : 'AND'}
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap gap-x-6 gap-y-2">
                 {group.filters.map((f) => (
                   <div key={f.key} className="flex items-center gap-1.5 text-sm">
@@ -347,7 +505,7 @@ export default function ScreenerPage() {
             </div>
           ))}
 
-          {/* Apply / Reset */}
+          {/* Apply / Reset / Save */}
           <div className="flex gap-3 pt-1">
             <button
               onClick={handleApply}
@@ -360,6 +518,12 @@ export default function ScreenerPage() {
               className="px-4 py-1.5 border border-gray-300 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 transition-colors"
             >
               Reset
+            </button>
+            <button
+              onClick={() => setSaveOpen(true)}
+              className="px-4 py-1.5 border border-gray-300 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 transition-colors ml-auto"
+            >
+              Save Screen
             </button>
           </div>
         </div>

@@ -166,3 +166,14 @@ export interface ScreenerResponse {
 export interface ScreenerFilters {
   [key: string]: string | undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Saved Screens
+// ---------------------------------------------------------------------------
+
+export interface SavedScreen {
+  id: number;
+  name: string;
+  filters: Record<string, string>;
+  created_at: string;
+}

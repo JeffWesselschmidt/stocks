@@ -2,13 +2,30 @@
 -- Screener Materialized View
 -- Pre-computes 10-year fundamental screening metrics per symbol.
 --
--- Refresh with:
+-- Drops and recreates on every migration so definition stays
+-- current.  Populate / refresh with:
 --   REFRESH MATERIALIZED VIEW CONCURRENTLY screener_metrics;
 -- =============================================================
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS screener_metrics AS
+DROP MATERIALIZED VIEW IF EXISTS screener_metrics;
+
+CREATE MATERIALIZED VIEW screener_metrics AS
 
 WITH
+
+-- =============================================================
+-- Step 0: Only include symbols that are still actively filing.
+-- A symbol whose most recent quarterly income is older than
+-- 2 years is considered delisted / acquired and excluded.
+-- =============================================================
+
+active_symbols AS (
+  SELECT symbol
+  FROM quarterly_income
+  WHERE symbol NOT LIKE '%-%'          -- exclude preferred / warrants / units
+  GROUP BY symbol
+  HAVING MAX(period_end_date) >= CURRENT_DATE - INTERVAL '2 years'
+),
 
 -- =============================================================
 -- Step 1: Annual aggregation from quarterly data (10yr window)
@@ -27,6 +44,7 @@ annual_income AS (
     SUM(qi.net_income) AS net_income,
     SUM(qi.eps_diluted) AS eps_diluted
   FROM quarterly_income qi
+  INNER JOIN active_symbols a ON qi.symbol = a.symbol
   WHERE qi.fiscal_year >= EXTRACT(YEAR FROM CURRENT_DATE)::int - 10
   GROUP BY qi.symbol, qi.fiscal_year
   HAVING COUNT(*) = 4
@@ -45,6 +63,7 @@ annual_bs AS (
     qbs.total_current_assets,
     qbs.total_current_liabilities
   FROM quarterly_balance_sheet qbs
+  INNER JOIN active_symbols a ON qbs.symbol = a.symbol
   WHERE qbs.fiscal_year >= EXTRACT(YEAR FROM CURRENT_DATE)::int - 10
   ORDER BY qbs.symbol, qbs.fiscal_year, qbs.period_end_date DESC
 ),
@@ -57,6 +76,7 @@ annual_cf AS (
     SUM(qcf.net_cash_operating) AS net_cash_operating,
     SUM(qcf.free_cash_flow) AS free_cash_flow
   FROM quarterly_cash_flow qcf
+  INNER JOIN active_symbols a ON qcf.symbol = a.symbol
   WHERE qcf.fiscal_year >= EXTRACT(YEAR FROM CURRENT_DATE)::int - 10
   GROUP BY qcf.symbol, qcf.fiscal_year
   HAVING COUNT(*) = 4
@@ -210,14 +230,15 @@ fcf_last   AS (SELECT DISTINCT ON (symbol) symbol, fiscal_year AS yr, free_cash_
 -- =============================================================
 
 latest_bs AS (
-  SELECT DISTINCT ON (symbol)
-    symbol,
-    long_term_debt AS latest_long_term_debt,
-    CASE WHEN NULLIF(total_current_liabilities, 0) IS NOT NULL
-      THEN ROUND(total_current_assets::numeric / total_current_liabilities, 2)
+  SELECT DISTINCT ON (qbs.symbol)
+    qbs.symbol,
+    qbs.long_term_debt AS latest_long_term_debt,
+    CASE WHEN NULLIF(qbs.total_current_liabilities, 0) IS NOT NULL
+      THEN ROUND(qbs.total_current_assets::numeric / qbs.total_current_liabilities, 2)
     END AS current_ratio
-  FROM quarterly_balance_sheet
-  ORDER BY symbol, period_end_date DESC
+  FROM quarterly_balance_sheet qbs
+  INNER JOIN active_symbols a ON qbs.symbol = a.symbol
+  ORDER BY qbs.symbol, qbs.period_end_date DESC
 ),
 
 -- =============================================================
@@ -265,7 +286,7 @@ symbol_agg AS (
 -- Final: assemble one row per symbol with all screening columns
 -- =============================================================
 
-SELECT
+SELECT DISTINCT ON (COALESCE(c.name, sa.symbol))
   sa.symbol,
   c.name,
   c.sector,
@@ -327,7 +348,8 @@ LEFT JOIN ocf_first  oof ON sa.symbol = oof.symbol
 LEFT JOIN ocf_last   ol  ON sa.symbol = ol.symbol
 LEFT JOIN fcf_first  ff  ON sa.symbol = ff.symbol
 LEFT JOIN fcf_last   fl  ON sa.symbol = fl.symbol
-LEFT JOIN latest_bs  lbs ON sa.symbol = lbs.symbol;
+LEFT JOIN latest_bs  lbs ON sa.symbol = lbs.symbol
+ORDER BY COALESCE(c.name, sa.symbol), LENGTH(sa.symbol), sa.symbol;
 
 -- Unique index required for REFRESH MATERIALIZED VIEW CONCURRENTLY
 CREATE UNIQUE INDEX IF NOT EXISTS idx_screener_metrics_symbol

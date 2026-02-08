@@ -119,6 +119,16 @@ CREATE INDEX IF NOT EXISTS idx_qcf_symbol ON quarterly_cash_flow(symbol);
 CREATE INDEX IF NOT EXISTS idx_qcf_fiscal_year ON quarterly_cash_flow(symbol, fiscal_year);
 
 -- =====================================================
+-- SAVED SCREENS (named screener filter presets)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS saved_screens (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    filters JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================================
 -- INGESTION STATE (for resumable bulk jobs)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS ingestion_state (

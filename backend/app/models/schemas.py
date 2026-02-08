@@ -166,3 +166,19 @@ class ScreenerRow(BaseModel):
 class ScreenerResponse(BaseModel):
     results: list[ScreenerRow]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Saved Screens
+# ---------------------------------------------------------------------------
+
+class SavedScreenCreate(BaseModel):
+    name: str
+    filters: dict[str, str]
+
+
+class SavedScreen(BaseModel):
+    id: int
+    name: str
+    filters: dict[str, str]
+    created_at: str
