@@ -6,6 +6,8 @@ export interface CompanyInfo {
   industry: string | null;
   currency: string | null;
   description: string | null;
+  rating: 'good' | 'bad' | null;
+  note: string | null;
 }
 
 export interface MarketData {
@@ -119,6 +121,8 @@ export interface SearchResult {
 export interface ScreenerRow {
   symbol: string;
   name: string | null;
+  rating: 'good' | 'bad' | null;
+  note: string | null;
   sector: string | null;
   industry: string | null;
   years_of_data: number | null;
@@ -143,6 +147,7 @@ export interface ScreenerRow {
   median_eps_growth: number | null;
   median_ocf_growth: number | null;
   median_fcf_growth: number | null;
+  pct_eps_yoy_positive: number | null;
 
   // Growth — CAGR (%)
   revenue_cagr: number | null;

@@ -36,6 +36,7 @@ from backend.app.models.schemas import (
     ScreenerResponse,
     SavedScreen,
     SavedScreenCreate,
+    SymbolMetaUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,8 @@ async def get_symbol_page(symbol: str):
         industry=company_row["industry"],
         currency=company_row["currency"],
         description=company_row["description"],
+        rating=company_row["rating"],
+        note=company_row["note"],
     )
 
     # 3. Fetch live market data from FMP
@@ -167,6 +170,55 @@ async def get_symbol_page(symbol: str):
     )
 
 
+@router.patch("/symbol/{symbol}/meta", response_model=CompanyInfo)
+async def update_symbol_meta(symbol: str, body: SymbolMetaUpdate):
+    """Update per-symbol metadata (rating/note)."""
+    symbol = symbol.upper().strip()
+    if not symbol:
+        raise HTTPException(400, "Symbol is required")
+
+    updates = body.dict(exclude_unset=True)
+    if "note" in updates and updates["note"] is not None:
+        note = updates["note"].strip()
+        updates["note"] = note if note else None
+
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    set_clauses: list[str] = []
+    params: list[object] = []
+    idx = 1
+    for field in ("rating", "note"):
+        if field in updates:
+            set_clauses.append(f"{field} = ${idx}")
+            params.append(updates[field])
+            idx += 1
+    set_clauses.append("last_updated = NOW()")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"UPDATE companies SET {', '.join(set_clauses)} WHERE symbol = ${idx} RETURNING *",
+            *params,
+            symbol,
+        )
+
+    if not row:
+        raise HTTPException(404, f"Symbol {symbol} not found")
+
+    return CompanyInfo(
+        symbol=symbol,
+        name=row["name"],
+        exchange=row["exchange"],
+        sector=row["sector"],
+        industry=row["industry"],
+        currency=row["currency"],
+        description=row["description"],
+        rating=row["rating"],
+        note=row["note"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /api/search?q=...
 # ---------------------------------------------------------------------------
@@ -236,8 +288,19 @@ _SCREENER_FILTER_COLS: set[str] = {
 
 # All columns valid for ORDER BY.
 _SCREENER_SORT_COLS: set[str] = _SCREENER_FILTER_COLS | {
-    "symbol", "name", "sector", "industry",
+    "symbol", "name", "rating", "note", "sector", "industry", "pct_eps_yoy_positive",
 }
+
+_SCREENER_SORT_SQL: dict[str, str] = {col: f"sm.{col}" for col in _SCREENER_FILTER_COLS}
+_SCREENER_SORT_SQL.update({
+    "symbol": "sm.symbol",
+    "name": "sm.name",
+    "sector": "sm.sector",
+    "industry": "sm.industry",
+    "rating": "c.rating",
+    "note": "c.note",
+    "pct_eps_yoy_positive": "sm.pct_eps_yoy_positive",
+})
 
 # Filter groups: map group key -> set of column names.
 # When a group key appears in the `or_groups` query param, conditions for
@@ -263,6 +326,7 @@ async def get_screener(
     request: Request,
     sector: str | None = Query(None, description="Filter by sector (case-insensitive)"),
     industry: str | None = Query(None, description="Filter by industry (case-insensitive)"),
+    rating: str | None = Query(None, description="Rating filter: good, bad, all (default hides bad)"),
     or_groups: str | None = Query(None, description="Comma-separated group keys to OR within (e.g. returns,growth_yoy)"),
     sort_by: str = Query("symbol", description="Column to sort by"),
     sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
@@ -302,7 +366,7 @@ async def get_screener(
         min_val = request.query_params.get(f"min_{col}")
         if min_val is not None:
             try:
-                cond = f"{col} >= ${idx}"
+                cond = f"sm.{col} >= ${idx}"
                 params.append(float(min_val))
                 idx += 1
                 if use_or:
@@ -314,7 +378,7 @@ async def get_screener(
         max_val = request.query_params.get(f"max_{col}")
         if max_val is not None:
             try:
-                cond = f"{col} <= ${idx}"
+                cond = f"sm.{col} <= ${idx}"
                 params.append(float(max_val))
                 idx += 1
                 if use_or:
@@ -332,14 +396,27 @@ async def get_screener(
             and_conditions.append(f"({' OR '.join(bucket)})")
 
     if sector:
-        and_conditions.append(f"sector ILIKE ${idx}")
+        and_conditions.append(f"sm.sector ILIKE ${idx}")
         params.append(sector)
         idx += 1
 
     if industry:
-        and_conditions.append(f"industry ILIKE ${idx}")
+        and_conditions.append(f"sm.industry ILIKE ${idx}")
         params.append(industry)
         idx += 1
+
+    if rating == "good":
+        and_conditions.append(f"c.rating = ${idx}")
+        params.append("good")
+        idx += 1
+    elif rating == "bad":
+        and_conditions.append(f"c.rating = ${idx}")
+        params.append("bad")
+        idx += 1
+    elif rating == "all":
+        pass
+    else:
+        and_conditions.append("c.rating IS DISTINCT FROM 'bad'")
 
     where = "WHERE " + " AND ".join(and_conditions) if and_conditions else ""
 
@@ -348,21 +425,24 @@ async def get_screener(
         sort_by = "symbol"
     if sort_dir.lower() not in ("asc", "desc"):
         sort_dir = "asc"
-    order = f"ORDER BY {sort_by} {sort_dir} NULLS LAST"
+    sort_expr = _SCREENER_SORT_SQL.get(sort_by, "sm.symbol")
+    order = f"ORDER BY {sort_expr} {sort_dir} NULLS LAST"
 
     # ---- execute queries ----
     async with pool.acquire() as conn:
         # Check if the materialized view exists and has data
         try:
             total = await conn.fetchval(
-                f"SELECT COUNT(*) FROM screener_metrics {where}", *params
+                f"SELECT COUNT(*) FROM screener_metrics sm LEFT JOIN companies c ON sm.symbol = c.symbol {where}", *params
             )
         except Exception:
             # View may not exist or be empty yet
             return ScreenerResponse(results=[], total=0)
 
         rows = await conn.fetch(
-            f"SELECT * FROM screener_metrics {where} {order} "
+            f"SELECT sm.*, c.rating AS rating, c.note AS note "
+            f"FROM screener_metrics sm LEFT JOIN companies c ON sm.symbol = c.symbol "
+            f"{where} {order} "
             f"LIMIT ${idx} OFFSET ${idx + 1}",
             *params, limit, offset,
         )

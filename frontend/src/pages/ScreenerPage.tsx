@@ -110,9 +110,12 @@ const fmtBigNum = (v: unknown) => {
   return n.toFixed(0);
 };
 
+const DEFAULT_RATING_FILTER = 'hide_bad';
+
 const COLUMNS: ColDef[] = [
   { key: 'symbol', label: 'Symbol' },
   { key: 'name', label: 'Name' },
+  { key: 'note', label: 'Notes' },
   { key: 'sector', label: 'Sector' },
   { key: 'median_roic', label: 'ROIC', fmt: fmtPct },
   { key: 'median_roe', label: 'ROE', fmt: fmtPct },
@@ -121,6 +124,7 @@ const COLUMNS: ColDef[] = [
   { key: 'median_operating_margin', label: 'Op Margin', fmt: fmtPct },
   { key: 'median_revenue_growth', label: 'Rev Gr', fmt: fmtPct },
   { key: 'median_eps_growth', label: 'EPS Gr', fmt: fmtPct },
+  { key: 'pct_eps_yoy_positive', label: 'EPS YoY +%', fmt: fmtPct },
   { key: 'median_fcf_growth', label: 'FCF Gr', fmt: fmtPct },
   { key: 'revenue_cagr', label: 'Rev CAGR', fmt: fmtPct },
   { key: 'eps_cagr', label: 'EPS CAGR', fmt: fmtPct },
@@ -142,17 +146,19 @@ function readStateFromParams(sp: URLSearchParams) {
     if (v) filters[key] = v;
   }
   const sector = sp.get('sector') ?? '';
+  const rating = sp.get('rating') ?? DEFAULT_RATING_FILTER;
   const sortBy = sp.get('sort_by') ?? 'symbol';
   const sortDir = (sp.get('sort_dir') === 'desc' ? 'desc' : 'asc') as 'asc' | 'desc';
   const offset = Math.max(0, Number(sp.get('offset')) || 0);
   const orGroups = new Set((sp.get('or_groups') ?? '').split(',').filter(Boolean));
-  return { filters, sector, sortBy, sortDir, offset, orGroups };
+  return { filters, sector, rating, sortBy, sortDir, offset, orGroups };
 }
 
 /** Build a URLSearchParams from the current screener state. */
 function buildParams(
   filters: Record<string, string>,
   sector: string,
+  rating: string,
   sortBy: string,
   sortDir: string,
   offset: number,
@@ -163,6 +169,7 @@ function buildParams(
     if (v) p.set(k, v);
   }
   if (sector) p.set('sector', sector);
+  if (rating && rating !== DEFAULT_RATING_FILTER) p.set('rating', rating);
   if (sortBy !== 'symbol') p.set('sort_by', sortBy);
   if (sortDir !== 'asc') p.set('sort_dir', sortDir);
   if (offset > 0) p.set('offset', String(offset));
@@ -188,6 +195,8 @@ export default function ScreenerPage() {
   const [activeFilters, setActiveFilters] = useState<Record<string, string>>(initial.current.filters);
   const [sectorFilter, setSectorFilter] = useState(initial.current.sector);
   const [activeSector, setActiveSector] = useState(initial.current.sector);
+  const [ratingFilter, setRatingFilter] = useState(initial.current.rating);
+  const [activeRating, setActiveRating] = useState(initial.current.rating);
 
   // Data state
   const [data, setData] = useState<ScreenerResponse | null>(null);
@@ -203,7 +212,11 @@ export default function ScreenerPage() {
   const [orGroups, setOrGroups] = useState<Set<string>>(initial.current.orGroups);
 
   // Filter panel visibility
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const stored = window.sessionStorage.getItem('screener_filters_open');
+    return stored ? stored === 'true' : true;
+  });
 
   // Saved screens
   const [savedScreens, setSavedScreens] = useState<SavedScreen[]>([]);
@@ -216,6 +229,7 @@ export default function ScreenerPage() {
     async (
       filters: Record<string, string>,
       sector: string,
+      rating: string,
       sort: string,
       dir: string,
       off: number,
@@ -223,13 +237,14 @@ export default function ScreenerPage() {
       replace = false,
     ) => {
       // Sync URL
-      setSearchParams(buildParams(filters, sector, sort, dir, off, orGrps), { replace });
+      setSearchParams(buildParams(filters, sector, rating, sort, dir, off, orGrps), { replace });
 
       setLoading(true);
       setError(null);
       try {
         const params: Record<string, string> = { ...filters };
         if (sector) params.sector = sector;
+        if (rating && rating !== DEFAULT_RATING_FILTER) params.rating = rating;
         if (orGrps.size > 0) params.or_groups = [...orGrps].join(',');
         params.sort_by = sort;
         params.sort_dir = dir;
@@ -249,7 +264,7 @@ export default function ScreenerPage() {
   // Initial load — uses whatever was in the URL (or defaults)
   useEffect(() => {
     const s = initial.current;
-    fetchData(s.filters, s.sector, s.sortBy, s.sortDir, s.offset, s.orGroups, true);
+    fetchData(s.filters, s.sector, s.rating, s.sortBy, s.sortDir, s.offset, s.orGroups, true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load saved screens on mount
@@ -258,6 +273,10 @@ export default function ScreenerPage() {
   }, []);
 
   // ---- Handlers ----
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem('screener_filters_open', String(filtersOpen));
+  }, [filtersOpen]);
 
   async function handleSaveScreen() {
     const name = saveName.trim();
@@ -267,6 +286,7 @@ export default function ScreenerPage() {
       // Capture all active filters + sector + or_groups into a single object
       const filters: Record<string, string> = { ...activeFilters };
       if (activeSector) filters.sector = activeSector;
+      if (activeRating && activeRating !== DEFAULT_RATING_FILTER) filters.rating = activeRating;
       if (orGroups.size > 0) filters.or_groups = [...orGroups].join(',');
       const created = await createSavedScreen(name, filters);
       setSavedScreens((prev) => [created, ...prev]);
@@ -289,19 +309,22 @@ export default function ScreenerPage() {
   }
 
   function handleLoadScreen(screen: SavedScreen) {
-    const { sector: savedSector, or_groups: savedOrGroups, ...rest } = screen.filters;
+    const { sector: savedSector, or_groups: savedOrGroups, rating: savedRating, ...rest } = screen.filters;
     const filters = { ...rest };
     const sec = savedSector ?? '';
+    const rate = savedRating ?? DEFAULT_RATING_FILTER;
     const restoredOrGroups = new Set((savedOrGroups ?? '').split(',').filter(Boolean));
     setFilterInputs(filters);
     setActiveFilters(filters);
     setSectorFilter(sec);
     setActiveSector(sec);
+    setRatingFilter(rate);
+    setActiveRating(rate);
     setOrGroups(restoredOrGroups);
     setOffset(0);
     setSortBy('symbol');
     setSortDir('asc');
-    fetchData(filters, sec, 'symbol', 'asc', 0, restoredOrGroups);
+    fetchData(filters, sec, rate, 'symbol', 'asc', 0, restoredOrGroups);
   }
 
   function handleApply() {
@@ -311,8 +334,9 @@ export default function ScreenerPage() {
     }
     setActiveFilters(clean);
     setActiveSector(sectorFilter);
+    setActiveRating(ratingFilter);
     setOffset(0);
-    fetchData(clean, sectorFilter, sortBy, sortDir, 0, orGroups);
+    fetchData(clean, sectorFilter, ratingFilter, sortBy, sortDir, 0, orGroups);
   }
 
   function handleReset() {
@@ -320,11 +344,13 @@ export default function ScreenerPage() {
     setActiveFilters({});
     setSectorFilter('');
     setActiveSector('');
+    setRatingFilter(DEFAULT_RATING_FILTER);
+    setActiveRating(DEFAULT_RATING_FILTER);
     setOrGroups(new Set());
     setOffset(0);
     setSortBy('symbol');
     setSortDir('asc');
-    fetchData({}, '', 'symbol', 'asc', 0, new Set());
+    fetchData({}, '', DEFAULT_RATING_FILTER, 'symbol', 'asc', 0, new Set());
   }
 
   function handleSort(col: string) {
@@ -337,12 +363,12 @@ export default function ScreenerPage() {
     setSortBy(col);
     setSortDir(newDir);
     setOffset(0);
-    fetchData(activeFilters, activeSector, col, newDir, 0, orGroups);
+    fetchData(activeFilters, activeSector, activeRating, col, newDir, 0, orGroups);
   }
 
   function handlePage(newOffset: number) {
     setOffset(newOffset);
-    fetchData(activeFilters, activeSector, sortBy, sortDir, newOffset, orGroups);
+    fetchData(activeFilters, activeSector, activeRating, sortBy, sortDir, newOffset, orGroups);
   }
 
   function toggleOrGroup(groupKey: string) {
@@ -438,7 +464,7 @@ export default function ScreenerPage() {
       {filtersOpen && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
           {/* Sector filter */}
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="font-medium text-gray-700 w-16">Sector</label>
             <input
               type="text"
@@ -447,6 +473,17 @@ export default function ScreenerPage() {
               placeholder="e.g. Technology"
               className="px-3 py-1.5 border border-gray-300 rounded text-sm w-48 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
+            <label className="font-medium text-gray-700 w-16">Rating</label>
+            <select
+              value={ratingFilter}
+              onChange={(e) => setRatingFilter(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded text-sm w-48 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value={DEFAULT_RATING_FILTER}>Hide Bad (default)</option>
+              <option value="good">Only Good</option>
+              <option value="bad">Only Bad</option>
+              <option value="all">Show All</option>
+            </select>
           </div>
 
           {/* Metric filters grouped by category */}
@@ -600,7 +637,25 @@ export default function ScreenerPage() {
                     );
                   } else if (col.key === 'name') {
                     content = (
-                      <span className="truncate max-w-[200px] inline-block" title={raw as string ?? ''}>
+                      <span className="flex items-center gap-1.5">
+                        {row.rating === 'good' && (
+                          <svg className="w-3.5 h-3.5 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 17.3l-6.16 3.24 1.18-6.88L2 8.76l6.92-1 3.08-6.27 3.08 6.27 6.92 1-5.02 4.9 1.18 6.88z" />
+                          </svg>
+                        )}
+                        {row.rating === 'bad' && (
+                          <svg className="w-3.5 h-3.5 text-red-500" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm5 9H7v2h10v-2z" />
+                          </svg>
+                        )}
+                        <span className="truncate max-w-[200px] inline-block" title={raw as string ?? ''}>
+                          {raw ?? '—'}
+                        </span>
+                      </span>
+                    );
+                  } else if (col.key === 'note') {
+                    content = (
+                      <span className="truncate max-w-[280px] inline-block" title={raw as string ?? ''}>
                         {raw ?? '—'}
                       </span>
                     );
