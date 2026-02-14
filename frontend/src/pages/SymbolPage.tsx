@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { getSymbolPage } from '../api/client';
+import { getSymbolPage, updateSymbolMeta } from '../api/client';
 import type { SymbolPageData } from '../types';
 import HeaderStrip from '../components/HeaderStrip';
 import KeyStatistics from '../components/KeyStatistics';
@@ -43,6 +43,12 @@ export default function SymbolPage() {
   const [data, setData] = useState<SymbolPageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [rating, setRating] = useState<'good' | 'bad' | null>(null);
+  const [note, setNote] = useState('');
+  const [noteDirty, setNoteDirty] = useState(false);
+  const [savingRating, setSavingRating] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!symbol) return;
@@ -66,6 +72,52 @@ export default function SymbolPage() {
       cancelled = true;
     };
   }, [symbol]);
+
+  useEffect(() => {
+    if (!data) return;
+    setRating(data.company.rating ?? null);
+    setNote(data.company.note ?? '');
+    setNoteDirty(false);
+  }, [data]);
+
+  async function handleToggleRating() {
+    if (!data || savingRating) return;
+    const next = rating === 'bad' ? 'good' : rating === 'good' ? null : 'bad';
+    const prev = rating;
+    setRating(next);
+    setSavingRating(true);
+    setMetaError(null);
+    try {
+      const updated = await updateSymbolMeta(symbol, { rating: next });
+      setData((current) =>
+        current ? { ...current, company: { ...current.company, rating: updated.rating, note: updated.note } } : current,
+      );
+    } catch (e) {
+      setRating(prev);
+      setMetaError(e instanceof Error ? e.message : 'Failed to update rating');
+    } finally {
+      setSavingRating(false);
+    }
+  }
+
+  async function handleSaveNote() {
+    if (!data || savingNote || !noteDirty) return;
+    const cleaned = note.trim();
+    setSavingNote(true);
+    setMetaError(null);
+    try {
+      const updated = await updateSymbolMeta(symbol, { note: cleaned ? cleaned : null });
+      setData((current) =>
+        current ? { ...current, company: { ...current.company, rating: updated.rating, note: updated.note } } : current,
+      );
+      setNote(updated.note ?? '');
+      setNoteDirty(false);
+    } catch (e) {
+      setMetaError(e instanceof Error ? e.message : 'Failed to update note');
+    } finally {
+      setSavingNote(false);
+    }
+  }
 
   if (!symbol) return null;
 
@@ -94,6 +146,8 @@ export default function SymbolPage() {
 
   if (!data) return null;
 
+  const ratingLabel = rating === 'good' ? 'Good' : rating === 'bad' ? 'Bad' : 'Unrated';
+
   return (
     <div className="space-y-5">
       {/* Header strip */}
@@ -101,15 +155,71 @@ export default function SymbolPage() {
 
       {/* Company name */}
       <div>
-        <h1 className="text-xl font-bold text-gray-900">
-          {data.company.name || symbol}
-          <span className="text-gray-400 font-normal ml-2 text-base">({symbol})</span>
-        </h1>
-        {data.company.sector && (
-          <p className="text-sm text-gray-500 mt-0.5">
-            {data.company.sector}
-            {data.company.industry ? ` — ${data.company.industry}` : ''}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">
+              {data.company.name || symbol}
+              <span className="text-gray-400 font-normal ml-2 text-base">({symbol})</span>
+            </h1>
+            {data.company.sector && (
+              <p className="text-sm text-gray-500 mt-0.5">
+                {data.company.sector}
+                {data.company.industry ? ` — ${data.company.industry}` : ''}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs uppercase tracking-wide text-gray-400">Rating</span>
+            <button
+              type="button"
+              onClick={handleToggleRating}
+              disabled={savingRating}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-full text-sm text-gray-600 hover:text-gray-900 hover:border-gray-300 disabled:opacity-50"
+              title="Click to cycle Good → Bad → None"
+            >
+              {rating === 'good' && (
+                <svg className="w-4 h-4 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 17.3l-6.16 3.24 1.18-6.88L2 8.76l6.92-1 3.08-6.27 3.08 6.27 6.92 1-5.02 4.9 1.18 6.88z" />
+                </svg>
+              )}
+              {rating === 'bad' && (
+                <svg className="w-4 h-4 text-red-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm5 9H7v2h10v-2z" />
+                </svg>
+              )}
+              {rating === null && (
+                <svg className="w-4 h-4 text-gray-300" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6h6v-2h-4V7z" />
+                </svg>
+              )}
+              <span>{ratingLabel}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Notes */}
+      <div className="border border-gray-200 rounded-lg bg-white p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold text-gray-700">Note</span>
+          <button
+            type="button"
+            onClick={handleSaveNote}
+            disabled={!noteDirty || savingNote}
+            className="px-3 py-1 text-xs font-medium bg-red-700 text-white rounded-full hover:bg-red-800 disabled:opacity-40"
+          >
+            {savingNote ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        <textarea
+          value={note}
+          onChange={(e) => { setNote(e.target.value); setNoteDirty(true); }}
+          placeholder="Add a note about this stock…"
+          rows={3}
+          className="w-full text-sm px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-500"
+        />
+        {metaError && (
+          <p className="text-xs text-red-600">{metaError}</p>
         )}
       </div>
 

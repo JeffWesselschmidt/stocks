@@ -1,10 +1,12 @@
-# Stocks - Symbol Page
+# Stocks - Symbol Page + Screener
 
 A web app for viewing fundamental financial data for US equities, powered by [Financial Modeling Prep](https://financialmodelingprep.com/) (FMP) and PostgreSQL.
 
 ## Features
 
 - **Symbol Page**: Header strip (price, market cap, EV, industry), Key Statistics panel (valuation ratios, 10-year median returns/margins, CAGR, capital structure), ROIC chart, and multi-year annual table.
+- **Ratings + Notes**: Mark stocks as Good/Bad (or clear), add a per-stock note in the symbol view, and see notes in the screener.
+- **Stock Screener**: Filter and sort by 10-year metrics, with saved screens and rating filters (bad hidden by default).
 - **Quarterly Data Storage**: Ingests and stores quarterly financial statements (income, balance sheet, cash flow) in PostgreSQL.
 - **Computed Metrics**: TTM and annual values computed from quarterly data. All formulas documented in code.
 - **Bulk Ingestion CLI**: Fetch fundamentals for the entire NYSE/NASDAQ universe (~8,000+ stocks). Resumable.
@@ -98,6 +100,7 @@ frontend/
   src/
     App.tsx           # Main app with search
     pages/SymbolPage  # Symbol page orchestrator
+    pages/ScreenerPage # Screener and filters
     components/       # HeaderStrip, KeyStatistics, ROICChart, AnnualTable
     api/client.ts     # API client
     types/index.ts    # TypeScript interfaces

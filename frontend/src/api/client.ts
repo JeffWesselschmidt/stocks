@@ -1,4 +1,4 @@
-import type { SymbolPageData, SearchResult, ScreenerResponse, SavedScreen } from '../types';
+import type { SymbolPageData, SearchResult, ScreenerResponse, SavedScreen, CompanyInfo } from '../types';
 
 const BASE = '/api';
 
@@ -13,6 +13,17 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 
 export async function getSymbolPage(symbol: string): Promise<SymbolPageData> {
   return fetchJSON<SymbolPageData>(`${BASE}/symbol/${encodeURIComponent(symbol)}`);
+}
+
+export async function updateSymbolMeta(
+  symbol: string,
+  payload: { rating?: 'good' | 'bad' | null; note?: string | null },
+): Promise<CompanyInfo> {
+  return fetchJSON<CompanyInfo>(`${BASE}/symbol/${encodeURIComponent(symbol)}/meta`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function searchSymbols(query: string): Promise<SearchResult[]> {

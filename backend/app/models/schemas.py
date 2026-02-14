@@ -1,5 +1,7 @@
 """Pydantic response models for the API."""
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -11,6 +13,8 @@ class CompanyInfo(BaseModel):
     industry: str | None = None
     currency: str | None = "USD"
     description: str | None = None
+    rating: Literal["good", "bad"] | None = None
+    note: str | None = None
 
 
 class MarketData(BaseModel):
@@ -124,6 +128,8 @@ class SearchResult(BaseModel):
 class ScreenerRow(BaseModel):
     symbol: str
     name: str | None = None
+    rating: Literal["good", "bad"] | None = None
+    note: str | None = None
     sector: str | None = None
     industry: str | None = None
     years_of_data: int | None = None
@@ -148,6 +154,7 @@ class ScreenerRow(BaseModel):
     median_eps_growth: float | None = None
     median_ocf_growth: float | None = None
     median_fcf_growth: float | None = None
+    pct_eps_yoy_positive: float | None = None
 
     # Growth — CAGR (%)
     revenue_cagr: float | None = None
@@ -166,6 +173,11 @@ class ScreenerRow(BaseModel):
 class ScreenerResponse(BaseModel):
     results: list[ScreenerRow]
     total: int
+
+
+class SymbolMetaUpdate(BaseModel):
+    rating: Literal["good", "bad"] | None = None
+    note: str | None = None
 
 
 # ---------------------------------------------------------------------------

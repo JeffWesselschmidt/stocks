@@ -29,11 +29,20 @@ CREATE TABLE IF NOT EXISTS companies (
     currency VARCHAR(10) DEFAULT 'USD',
     description TEXT,
     market_cap BIGINT,
+    rating VARCHAR(10) CHECK (rating IN ('good', 'bad')),
+    note TEXT,
     last_updated TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Ensure new columns exist on older databases
+ALTER TABLE companies
+  ADD COLUMN IF NOT EXISTS rating VARCHAR(10) CHECK (rating IN ('good', 'bad'));
+ALTER TABLE companies
+  ADD COLUMN IF NOT EXISTS note TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_companies_sector ON companies(sector);
 CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies(industry);
+CREATE INDEX IF NOT EXISTS idx_companies_rating ON companies(rating);
 
 -- =====================================================
 -- QUARTERLY INCOME STATEMENTS

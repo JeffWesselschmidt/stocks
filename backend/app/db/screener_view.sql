@@ -212,6 +212,40 @@ annual_growth AS (
 ),
 
 -- =============================================================
+-- Step 3b: Quarterly YoY EPS growth positivity (% of quarters)
+-- =============================================================
+
+quarterly_eps_yoy AS (
+  SELECT
+    qi.symbol,
+    qi.period_end_date,
+    qi.eps_diluted,
+    LAG(qi.eps_diluted, 4) OVER w AS eps_prev_year
+  FROM quarterly_income qi
+  INNER JOIN active_symbols a ON qi.symbol = a.symbol
+  WINDOW w AS (PARTITION BY qi.symbol ORDER BY qi.period_end_date)
+),
+
+eps_yoy_positive AS (
+  SELECT
+    symbol,
+    ROUND(
+      COUNT(*) FILTER (
+        WHERE eps_diluted IS NOT NULL
+          AND eps_prev_year IS NOT NULL
+          AND eps_diluted > eps_prev_year
+      )::numeric
+      / NULLIF(COUNT(*) FILTER (
+        WHERE eps_diluted IS NOT NULL
+          AND eps_prev_year IS NOT NULL
+      ), 0) * 100,
+      2
+    ) AS pct_eps_yoy_positive
+  FROM quarterly_eps_yoy
+  GROUP BY symbol
+),
+
+-- =============================================================
 -- Step 4: CAGR inputs — first/last positive values per symbol
 --   Uses DISTINCT ON for efficient first/last row selection.
 -- =============================================================
@@ -289,6 +323,8 @@ symbol_agg AS (
 SELECT DISTINCT ON (COALESCE(c.name, sa.symbol))
   sa.symbol,
   c.name,
+  c.rating,
+  c.note,
   c.sector,
   c.industry,
   sa.years_of_data,
@@ -313,6 +349,7 @@ SELECT DISTINCT ON (COALESCE(c.name, sa.symbol))
   sa.median_eps_growth,
   sa.median_ocf_growth,
   sa.median_fcf_growth,
+  eyp.pct_eps_yoy_positive,
 
   -- CAGR  =  (end/start)^(1/years) - 1  * 100
   CASE WHEN rl.yr - rf.yr > 0
@@ -340,6 +377,7 @@ SELECT DISTINCT ON (COALESCE(c.name, sa.symbol))
 
 FROM symbol_agg sa
 LEFT JOIN companies  c   ON sa.symbol = c.symbol
+LEFT JOIN eps_yoy_positive eyp ON sa.symbol = eyp.symbol
 LEFT JOIN rev_first  rf  ON sa.symbol = rf.symbol
 LEFT JOIN rev_last   rl  ON sa.symbol = rl.symbol
 LEFT JOIN eps_first  ef  ON sa.symbol = ef.symbol
@@ -358,5 +396,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_screener_metrics_symbol
 -- Indexes for common filter / sort columns
 CREATE INDEX IF NOT EXISTS idx_screener_sector    ON screener_metrics(sector);
 CREATE INDEX IF NOT EXISTS idx_screener_industry  ON screener_metrics(industry);
+CREATE INDEX IF NOT EXISTS idx_screener_rating    ON screener_metrics(rating);
 CREATE INDEX IF NOT EXISTS idx_screener_roic      ON screener_metrics(median_roic);
 CREATE INDEX IF NOT EXISTS idx_screener_profit    ON screener_metrics(profit_pct);
+CREATE INDEX IF NOT EXISTS idx_screener_eps_yoy_pos ON screener_metrics(pct_eps_yoy_positive);
