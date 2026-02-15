@@ -182,3 +182,54 @@ export interface SavedScreen {
   filters: Record<string, string>;
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Tournament
+// ---------------------------------------------------------------------------
+
+export interface TournamentStartResponse {
+  tournament_id: number;
+  status: string;
+  total_stocks: number;
+  bracket_size: number;
+  total_rounds: number;
+}
+
+export interface TournamentMatchSide {
+  side: 'A' | 'B';
+  stats: Record<string, number | null>;
+  annual_table: AnnualRow[];
+}
+
+export interface TournamentMatch {
+  match_id: number;
+  round: number;
+  match_index: number;
+  side_a: TournamentMatchSide;
+  side_b: TournamentMatchSide;
+}
+
+export interface TournamentCurrentResponse {
+  tournament_id: number;
+  status: string;
+  total_stocks: number;
+  bracket_size: number;
+  total_rounds: number;
+  decided_matches: number;
+  total_matches: number;
+  next_match: TournamentMatch | null;
+}
+
+export interface TournamentResultRow {
+  symbol: string;
+  name: string | null;
+  rank: number;
+  seed_rank: number;
+  seed_score: number;
+}
+
+export interface TournamentResultsResponse {
+  tournament_id: number;
+  status: string;
+  results: TournamentResultRow[];
+}

@@ -396,12 +396,20 @@ export default function ScreenerPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-900">Stock Screener</h1>
-        <button
-          onClick={() => setFiltersOpen(!filtersOpen)}
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
-          {filtersOpen ? 'Hide Filters' : 'Show Filters'}
-        </button>
+        <div className="flex items-center gap-3">
+          <Link
+            to="/tournament"
+            className="text-sm font-medium text-red-700 hover:text-red-800"
+          >
+            Tournament
+          </Link>
+          <button
+            onClick={() => setFiltersOpen(!filtersOpen)}
+            className="text-sm text-gray-500 hover:text-gray-700"
+          >
+            {filtersOpen ? 'Hide Filters' : 'Show Filters'}
+          </button>
+        </div>
       </div>
 
       {/* ---- Saved Screens ---- */}

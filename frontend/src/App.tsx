@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Outlet, Link, useNavigate, useMatch } fro
 import SearchBar from './components/SearchBar';
 import SymbolPage from './pages/SymbolPage';
 import ScreenerPage from './pages/ScreenerPage';
+import TournamentPage from './pages/TournamentPage';
 
 function Layout() {
   const navigate = useNavigate();
@@ -75,6 +76,7 @@ export default function App() {
           <Route index element={<HomePage />} />
           <Route path="symbol/:symbol" element={<SymbolPage />} />
           <Route path="screener" element={<ScreenerPage />} />
+          <Route path="tournament" element={<TournamentPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
