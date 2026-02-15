@@ -1,4 +1,13 @@
-import type { SymbolPageData, SearchResult, ScreenerResponse, SavedScreen, CompanyInfo } from '../types';
+import type {
+  SymbolPageData,
+  SearchResult,
+  ScreenerResponse,
+  SavedScreen,
+  CompanyInfo,
+  TournamentStartResponse,
+  TournamentCurrentResponse,
+  TournamentResultsResponse,
+} from '../types';
 
 const BASE = '/api';
 
@@ -62,4 +71,33 @@ export async function deleteSavedScreen(id: number): Promise<void> {
     const text = await resp.text();
     throw new Error(`${resp.status}: ${text}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tournament
+// ---------------------------------------------------------------------------
+
+export async function startTournament(): Promise<TournamentStartResponse> {
+  return fetchJSON<TournamentStartResponse>(`${BASE}/tournament/start`, {
+    method: 'POST',
+  });
+}
+
+export async function getCurrentTournament(): Promise<TournamentCurrentResponse> {
+  return fetchJSON<TournamentCurrentResponse>(`${BASE}/tournament/current`);
+}
+
+export async function pickTournamentWinner(
+  matchId: number,
+  winnerSide: 'A' | 'B',
+): Promise<TournamentCurrentResponse> {
+  return fetchJSON<TournamentCurrentResponse>(`${BASE}/tournament/pick`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ match_id: matchId, winner_side: winnerSide }),
+  });
+}
+
+export async function getTournamentResults(): Promise<TournamentResultsResponse> {
+  return fetchJSON<TournamentResultsResponse>(`${BASE}/tournament/results`);
 }

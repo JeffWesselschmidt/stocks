@@ -151,3 +151,55 @@ CREATE TABLE IF NOT EXISTS ingestion_state (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_status ON ingestion_state(job_type, status);
+
+-- =====================================================
+-- TOURNAMENTS (single active)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS tournaments (
+    id SERIAL PRIMARY KEY,
+    status VARCHAR(20) NOT NULL DEFAULT 'active', -- active | complete | abandoned
+    seed_formula VARCHAR(200) NOT NULL,
+    total_stocks INTEGER NOT NULL,
+    bracket_size INTEGER NOT NULL,
+    total_rounds INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tournaments_active
+  ON tournaments(status)
+  WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS tournament_entries (
+    tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    symbol VARCHAR(20) NOT NULL,
+    seed_rank INTEGER NOT NULL,
+    seed_score NUMERIC(18,6) NOT NULL,
+    PRIMARY KEY (tournament_id, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tournament_entries_rank
+  ON tournament_entries(tournament_id, seed_rank);
+
+CREATE TABLE IF NOT EXISTS tournament_matches (
+    id SERIAL PRIMARY KEY,
+    tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    round INTEGER NOT NULL,
+    match_index INTEGER NOT NULL,
+    symbol_a VARCHAR(20),
+    symbol_b VARCHAR(20),
+    winner_symbol VARCHAR(20),
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (tournament_id, round, match_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tournament_matches_round
+  ON tournament_matches(tournament_id, round, match_index);
+
+CREATE TABLE IF NOT EXISTS tournament_results (
+    tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    symbol VARCHAR(20) NOT NULL,
+    rank INTEGER NOT NULL,
+    PRIMARY KEY (tournament_id, symbol)
+);

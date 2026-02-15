@@ -181,6 +181,63 @@ class SymbolMetaUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Tournament
+# ---------------------------------------------------------------------------
+
+
+class TournamentStartResponse(BaseModel):
+    tournament_id: int
+    status: str
+    total_stocks: int
+    bracket_size: int
+    total_rounds: int
+
+
+class TournamentMatchSide(BaseModel):
+    side: Literal["A", "B"]
+    stats: dict[str, float | int | None]
+    annual_table: list[AnnualRow]
+
+
+class TournamentMatch(BaseModel):
+    match_id: int
+    round: int
+    match_index: int
+    side_a: TournamentMatchSide
+    side_b: TournamentMatchSide
+
+
+class TournamentCurrentResponse(BaseModel):
+    tournament_id: int
+    status: str
+    total_stocks: int
+    bracket_size: int
+    total_rounds: int
+    decided_matches: int
+    total_matches: int
+    next_match: TournamentMatch | None = None
+
+
+class TournamentPick(BaseModel):
+    match_id: int
+    winner_side: Literal["A", "B"]
+
+
+class TournamentResultRow(BaseModel):
+    symbol: str
+    name: str | None = None
+    rank: int
+    seed_rank: int
+    seed_score: float
+
+
+class TournamentResultsResponse(BaseModel):
+    tournament_id: int
+    status: str
+    results: list[TournamentResultRow]
+
+
+# ---------------------------------------------------------------------------
 # Saved Screens
 # ---------------------------------------------------------------------------
 
