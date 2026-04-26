@@ -36,6 +36,7 @@ const FILTER_GROUPS: FilterGroup[] = [
     title: 'Profitability',
     filters: [
       { key: 'profit_pct', label: 'Profit %', mode: 'min' },
+      { key: 'pct_gm_yoy_positive', label: 'GM YoY ≥ %', mode: 'min' },
     ],
   },
   {
@@ -121,6 +122,7 @@ const COLUMNS: ColDef[] = [
   { key: 'median_roe', label: 'ROE', fmt: fmtPct },
   { key: 'median_roa', label: 'ROA', fmt: fmtPct },
   { key: 'profit_pct', label: 'Profit %', fmt: fmtPct },
+  { key: 'pct_gm_yoy_positive', label: 'GM YoY +%', fmt: fmtPct },
   { key: 'median_operating_margin', label: 'Op Margin', fmt: fmtPct },
   { key: 'median_revenue_growth', label: 'Rev Gr', fmt: fmtPct },
   { key: 'median_eps_growth', label: 'EPS Gr', fmt: fmtPct },
