@@ -141,6 +141,7 @@ class ScreenerRow(BaseModel):
 
     # Profitability
     profit_pct: float | None = None
+    pct_gm_yoy_positive: float | None = None
 
     # Margins (10yr medians, %)
     median_gross_margin: float | None = None

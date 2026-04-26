@@ -134,6 +134,7 @@ export interface ScreenerRow {
 
   // Profitability
   profit_pct: number | null;
+  pct_gm_yoy_positive: number | null;
 
   // Margins (10yr medians, %)
   median_gross_margin: number | null;

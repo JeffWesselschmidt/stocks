@@ -212,7 +212,38 @@ annual_growth AS (
 ),
 
 -- =============================================================
--- Step 3b: Quarterly YoY EPS growth positivity (% of quarters)
+-- Step 3b: Annual gross margin YoY positivity (% of years)
+-- =============================================================
+
+annual_gm_yoy AS (
+  SELECT
+    am.symbol,
+    am.gross_margin,
+    LAG(am.gross_margin) OVER (PARTITION BY am.symbol ORDER BY am.fiscal_year) AS prev_gross_margin
+  FROM annual_metrics am
+),
+
+gm_yoy_positive AS (
+  SELECT
+    symbol,
+    ROUND(
+      COUNT(*) FILTER (
+        WHERE gross_margin IS NOT NULL
+          AND prev_gross_margin IS NOT NULL
+          AND gross_margin >= prev_gross_margin
+      )::numeric
+      / NULLIF(COUNT(*) FILTER (
+        WHERE gross_margin IS NOT NULL
+          AND prev_gross_margin IS NOT NULL
+      ), 0) * 100,
+      2
+    ) AS pct_gm_yoy_positive
+  FROM annual_gm_yoy
+  GROUP BY symbol
+),
+
+-- =============================================================
+-- Step 3c: Quarterly YoY EPS growth positivity (% of quarters)
 -- =============================================================
 
 quarterly_eps_yoy AS (
@@ -350,6 +381,7 @@ SELECT DISTINCT ON (COALESCE(c.name, sa.symbol))
   sa.median_ocf_growth,
   sa.median_fcf_growth,
   eyp.pct_eps_yoy_positive,
+  gmyoy.pct_gm_yoy_positive,
 
   -- CAGR  =  (end/start)^(1/years) - 1  * 100
   CASE WHEN rl.yr - rf.yr > 0
@@ -378,6 +410,7 @@ SELECT DISTINCT ON (COALESCE(c.name, sa.symbol))
 FROM symbol_agg sa
 LEFT JOIN companies  c   ON sa.symbol = c.symbol
 LEFT JOIN eps_yoy_positive eyp ON sa.symbol = eyp.symbol
+LEFT JOIN gm_yoy_positive gmyoy ON sa.symbol = gmyoy.symbol
 LEFT JOIN rev_first  rf  ON sa.symbol = rf.symbol
 LEFT JOIN rev_last   rl  ON sa.symbol = rl.symbol
 LEFT JOIN eps_first  ef  ON sa.symbol = ef.symbol
@@ -400,3 +433,4 @@ CREATE INDEX IF NOT EXISTS idx_screener_rating    ON screener_metrics(rating);
 CREATE INDEX IF NOT EXISTS idx_screener_roic      ON screener_metrics(median_roic);
 CREATE INDEX IF NOT EXISTS idx_screener_profit    ON screener_metrics(profit_pct);
 CREATE INDEX IF NOT EXISTS idx_screener_eps_yoy_pos ON screener_metrics(pct_eps_yoy_positive);
+CREATE INDEX IF NOT EXISTS idx_screener_gm_yoy_pos  ON screener_metrics(pct_gm_yoy_positive);

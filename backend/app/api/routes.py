@@ -398,7 +398,7 @@ async def search_symbols(q: str = Query(..., min_length=1)):
 # Numeric columns that support min_* / max_* query-param filters.
 _SCREENER_FILTER_COLS: set[str] = {
     "median_roa", "median_roe", "median_roic",
-    "profit_pct",
+    "profit_pct", "pct_gm_yoy_positive",
     "median_gross_margin", "median_operating_margin", "median_net_margin", "median_fcf_margin",
     "median_revenue_growth", "median_ni_growth", "median_eps_growth",
     "median_ocf_growth", "median_fcf_growth",
@@ -428,7 +428,7 @@ _SCREENER_SORT_SQL.update({
 # its columns are OR'd together instead of AND'd.
 _SCREENER_FILTER_GROUPS: dict[str, set[str]] = {
     "returns": {"median_roa", "median_roe", "median_roic"},
-    "profitability": {"profit_pct"},
+    "profitability": {"profit_pct", "pct_gm_yoy_positive"},
     "margins": {"median_gross_margin", "median_operating_margin", "median_net_margin", "median_fcf_margin"},
     "growth_yoy": {"median_revenue_growth", "median_ni_growth", "median_eps_growth", "median_ocf_growth", "median_fcf_growth"},
     "growth_cagr": {"revenue_cagr", "eps_cagr", "ocf_cagr", "fcf_cagr"},
